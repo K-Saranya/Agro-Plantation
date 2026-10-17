@@ -14,9 +14,12 @@ module.exports = (sequelize, DataTypes) => {
     }
   }
   auth.init({
+    name: DataTypes.STRING,
     email: DataTypes.STRING,
     password: DataTypes.STRING,
-    forgetpassword: DataTypes.STRING
+    forgetpassword: DataTypes.STRING,
+    token: DataTypes.STRING(512),
+    role: { type: DataTypes.STRING, defaultValue: 'customer' }
   }, {
     sequelize,
     modelName: 'auth',

@@ -1,207 +1,217 @@
-const Model = require("../models")
-const authController = Model.auth
+const Model = require("../models");
+const authController = Model.auth;
 const bcrypt = require("bcryptjs");
-const  jwt = require("jsonwebtoken")
-const secret = "4641316895";
+const { sign } = require("../lib/token");
+const { jwtSecret } = require("../middleware/auth");
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function publicUser(user) {
+  const json = user.toJSON ? user.toJSON() : { ...user };
+  delete json.password;
+  delete json.token;
+  return json;
+}
+
+function signToken(id) {
+  return sign({ id }, jwtSecret(), 60 * 60 * 24);
+}
+
+function fail(res, status, message) {
+  return res.status(status).json({ status, message });
+}
 
 const login = async (req, res) => {
-  const email = req.body.email;
-  const password = req.body.password;
   try {
-    await authController.findAll({ where: { email: email } })
-      .then(async (data) => {
-        if (data.length == 0) {
-          res.json({
-            status: 400,
-            message: "Please Register...",
-          });
-        } else {
-          let passwordresult = await bcrypt.compare(password, data[0].password);
-          if (passwordresult == true) {
-            let token = jwt.sign({ id: data[0].id }, secret, {
-              expiresIn: "24hr",
-            });
-            await authController.update(
-              { token: token },
-              {
-                where: {
-                  id: data[0].id,
-                },
-              }
-            );
-            await authController.findAll({
-              attributes: { exclude: ["password"] },
-              where: { email: email },
-            }).then(async (Admindata) => {
-              res.json({
-                status: 200,
-                message: "SUCCESS",
-                data: { token, Admindata },
-              });
-            });
-          } else {
-            res.json({
-              status: 400,
-              message: "Wrong Password.. Please Check",
-            });
-          }
-        }
-      })
-      .catch((err) => {
-        res.json({
-          status: 400,
-          message: err.message,
-        });
-      });
-  } catch (error) {
-    res.json({
-      status: 400,
-      message: err.message,
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+    if (!email || !password) {
+      return fail(res, 400, "Email and password are required.");
+    }
+
+    const user = await authController.findOne({ where: { email } });
+    if (!user) {
+      return fail(res, 400, "Please Register...");
+    }
+
+    let passwordOk = false;
+    try {
+      passwordOk = await bcrypt.compare(password, user.password || "");
+    } catch (error) {
+      passwordOk = false;
+    }
+    if (!passwordOk && user.password === password) {
+      passwordOk = true;
+      user.password = bcrypt.hashSync(password, 10);
+    }
+    if (!passwordOk) {
+      return fail(res, 400, "Wrong Password.. Please Check");
+    }
+
+    const adminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    if (adminEmail && email === adminEmail && user.role !== "admin") {
+      user.role = "admin";
+    }
+
+    const token = signToken(user.id);
+    user.token = token;
+    await user.save();
+
+    const safe = publicUser(user);
+    return res.json({
+      status: 200,
+      message: "SUCCESS",
+      data: { token, Admindata: [safe], user: safe },
     });
+  } catch (error) {
+    return fail(res, 400, error.message);
   }
 };
 
-
 const addNew = async (req, res) => {
-    try {
-      const data = req.body;
-      var salt = bcrypt.genSaltSync(10);
-      var hash = bcrypt.hashSync(req.body.password, salt);
-      data["password"] = hash;
-      await authController.findAll({
-        where: { email: req.body.email },
-      }).then(async (Admindata) => {
-        if (Admindata.length === 0) {
-          await authController.create(data)
-            .then(async (data) => {
-              let token = jwt.sign({ id: data.id }, secret, {
-                expiresIn: "24h",
-              });
-              await authController.update(
-                { token: token },
-                {
-                  where: {
-                    id: data.id,
-                  },
-                }
-              )
-                .then(() => {
-                  res.json({
-                    status: 200,
-                    message: "SUCCESS",
-                    data: { id: data.id, token: token },
-                  });
-                })
-                .catch((err) => {
-                  res.json({
-                    status: 400,
-                    message: err.message,
-                  });
-                });
-            })
-            .catch((err) => {
-              res.json({
-                status: 400,
-                message: err.message,
-              });
-            });
-        } else {
-          res.json({
-            status: 400,
-            message: "This email already has an account",
-          });
-        }
-      });
-    } catch (error) {
-      res.json({
-        status: 400,
-        message: error.message,
-      });
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+    const name = String(req.body.name || "").trim();
+    if (!EMAIL_RE.test(email)) {
+      return fail(res, 400, "Enter a valid email address.");
     }
-  };
-  
-const viewAll = async(req,res)=>{
-    try {
-        const data = await authController.findAll();
-        res.send(data);
-    } catch (error) {
-        res.send(error);
+    if (password.length < 6) {
+      return fail(res, 400, "Password must be at least 6 characters.");
     }
-}
-const viewById= async(req,res)=>{
-    try {
-        const {id}=req.params
-        const data = await authController.findOne({
-            where:{id:id},
-        })
-        res.send(data);
-    } catch (error) {
-        res.send(error);
-    }
-}
-const updateById = async(req,res)=>{
-    try {
-        const {id}=req.params
-        const data = await authController.update(req.body,{
-            where:{id:id},
-        })
-        res.send(data);
-    } catch (error) {
-        res.send(error);
-    }
-}
-const deleteById = async(req,res)=>{
-    try {
-        const {id}=req.params;
-        await authController.destroy({
-            where:{id:id},
-        })
-        res.send("deleted successfully")
-    } catch (error) {
-        res.send(error);
-    }
-}
 
-  
-  const updatePassword = async (req, res) => {
-    try {
-      const value = req.body;
-      const id = req.body.id;
-      var salt = bcrypt.genSaltSync(10);
-      var hash = bcrypt.hashSync(req.body.password, salt);
-      value["password"] = hash;
-  
-      await authController.update(value, {
-        where: {
-          id: id,
-        },
-      })
-        .then(() => {
-          res.json({
-            status: 200,
-            message: "Updated Successfully",
-          });
-        })
-        .catch((err) => {
-          res.json({
-            status: 400,
-            message: err.message,
-          });
-        });
-    } catch (error) {
-      res.json({
-        status: 400,
-        message: error.message,
-      });
+    const existing = await authController.findOne({ where: { email } });
+    if (existing) {
+      return fail(res, 400, "This email already has an account");
     }
-  };
 
-module.exports={
-    addNew,
-    viewAll,
-    viewById,
-    updateById,
-    deleteById,
-    login,
-    updatePassword
-}
+    const adminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const user = await authController.create({
+      name: name || email.split("@")[0],
+      email,
+      password: bcrypt.hashSync(password, 10),
+      role: adminEmail && email === adminEmail ? "admin" : "customer",
+    });
+    const token = signToken(user.id);
+    user.token = token;
+    await user.save();
+
+    return res.json({
+      status: 200,
+      message: "SUCCESS",
+      data: { id: user.id, token, user: publicUser(user) },
+    });
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const viewAll = async (req, res) => {
+  try {
+    const data = await authController.findAll({
+      attributes: { exclude: ["password", "token"] },
+      order: [["createdAt", "DESC"]],
+    });
+    return res.json(data);
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const viewById = async (req, res) => {
+  try {
+    const data = await authController.findOne({
+      where: { id: req.params.id },
+      attributes: { exclude: ["password", "token"] },
+    });
+    if (!data) return fail(res, 404, "Account not found.");
+    return res.json(data);
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const updateById = async (req, res) => {
+  try {
+    const target = await authController.findByPk(req.params.id);
+    if (!target) return fail(res, 404, "Account not found.");
+
+    const isSelf = req.user && Number(req.user.id) === Number(target.id);
+    const isAdmin = req.user && req.user.role === "admin";
+    if (!isSelf && !isAdmin) {
+      return fail(res, 403, "You can only update your own account.");
+    }
+
+    const next = {};
+    if (req.body.name !== undefined) next.name = String(req.body.name).trim();
+    if (req.body.email !== undefined) {
+      const email = String(req.body.email).trim().toLowerCase();
+      if (!EMAIL_RE.test(email)) return fail(res, 400, "Enter a valid email address.");
+      next.email = email;
+    }
+    if (req.body.password) {
+      if (String(req.body.password).length < 6) {
+        return fail(res, 400, "Password must be at least 6 characters.");
+      }
+      next.password = bcrypt.hashSync(String(req.body.password), 10);
+    }
+    if (isAdmin && req.body.role) next.role = req.body.role === "admin" ? "admin" : "customer";
+
+    await target.update(next);
+    return res.json({ status: 200, message: "Updated Successfully", data: publicUser(target) });
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const deleteById = async (req, res) => {
+  try {
+    const removed = await authController.destroy({ where: { id: req.params.id } });
+    if (!removed) return fail(res, 404, "Account not found.");
+    return res.json({ status: 200, message: "deleted successfully" });
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const updatePassword = async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const raw = req.body.newPassword || req.body.password;
+    const id = req.body.id;
+    if (!raw || String(raw).length < 6) {
+      return fail(res, 400, "Password must be at least 6 characters.");
+    }
+    if (!email && !id) {
+      return fail(res, 400, "Email is required.");
+    }
+
+    const user = email
+      ? await authController.findOne({ where: { email } })
+      : await authController.findByPk(id);
+    if (!user) return fail(res, 400, "No account found for that email.");
+
+    user.password = bcrypt.hashSync(String(raw), 10);
+    user.forgetpassword = null;
+    user.token = null;
+    await user.save();
+    return res.json({ status: 200, message: "Updated Successfully" });
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+};
+
+const me = async (req, res) => {
+  return res.json({ status: 200, data: publicUser(req.user) });
+};
+
+module.exports = {
+  addNew,
+  viewAll,
+  viewById,
+  updateById,
+  deleteById,
+  login,
+  updatePassword,
+  me,
+};

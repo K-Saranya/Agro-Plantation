@@ -4,16 +4,34 @@ const fs = require('fs');
 const path = require('path');
 const Sequelize = require('sequelize');
 const process = require('process');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const basename = path.basename(__filename);
 const env = process.env.NODE_ENV || 'development';
 const config = require(__dirname + '/../config/config.json')[env];
 const db = {};
 
 let sequelize;
-if (config.use_env_variable) {
-  sequelize = new Sequelize(process.env[config.use_env_variable], config);
+const dialect = (process.env.DB_DIALECT || 'sqlite').toLowerCase();
+if (dialect === 'mysql') {
+  sequelize = new Sequelize(
+    process.env.DB_NAME || config.database,
+    process.env.DB_USER || config.username,
+    process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : config.password,
+    {
+      host: process.env.DB_HOST || config.host,
+      port: Number(process.env.DB_PORT || 3306),
+      dialect: 'mysql',
+      logging: false,
+    }
+  );
 } else {
-  sequelize = new Sequelize(config.database, config.username, config.password, config);
+  const storage = process.env.DB_STORAGE || path.join(__dirname, '..', 'data', 'agro.sqlite');
+  fs.mkdirSync(path.dirname(path.resolve(storage)), { recursive: true });
+  sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: path.resolve(storage),
+    logging: false,
+  });
 }
 
 fs
